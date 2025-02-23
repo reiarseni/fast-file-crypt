@@ -16,8 +16,9 @@ import math
 class FastCompressor:
     def __init__(self):
         self.window = tk.Tk()
-        self.window.title("File Compressor and Encryptor v1.0")
+        self.window.title("Fast File Compressor and Encryptor v1.0")
         self.window.geometry("425x400")
+        self.center_window()  # Center the window on the screen
 
         # Configure interface
         self.setup_ui()
@@ -26,6 +27,17 @@ class FastCompressor:
         self.BUFFER_SIZE = 4 * 1024 * 1024  # 4MB buffer
         # Number of parallel workers, handle os.cpu_count() returning None
         self.MAX_WORKERS = max(4, os.cpu_count() or 1)
+
+    def center_window(self):
+        # Ensure the window dimensions are calculated
+        self.window.update_idletasks()
+        width = 425
+        height = 400
+        screen_width = self.window.winfo_screenwidth()
+        screen_height = self.window.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        self.window.geometry(f"{width}x{height}+{x}+{y}")
 
     def setup_ui(self):
         # Main frame
