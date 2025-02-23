@@ -64,24 +64,25 @@ class FastCompressor:
     def process_chunk(self, chunk, cipher, compressor):
         """Process a single chunk with compression and encryption"""
         compressed = compressor.compress(chunk)
-        if compressed:
-            return cipher.encrypt(compressed)
-        return b''
+        flushed = compressor.flush()  # finish compression for this chunk
+        return cipher.encrypt(compressed + flushed)
 
     def process_chunk_decrypt(self, chunk, cipher, decompressor):
         """Process a single chunk with decryption and decompression"""
         decrypted = cipher.decrypt(chunk)
-        return decompressor.decompress(decrypted)
+        decompressed = decompressor.decompress(decrypted)
+        flushed = decompressor.flush()
+        return decompressed + flushed
 
     def compress_and_encrypt(self, input_path, output_path, key):
         try:
             filesize = os.path.getsize(input_path)
             bytes_processed = 0
-            result_queue = queue.PriorityQueue()
 
             # Generate random nonce for CTR mode
             nonce = get_random_bytes(8)
             # Create cipher in CTR mode (Counter mode - very fast and parallelizable)
+            # Note: The initial cipher instance below is only used for writing nonce based flush data previously.
             cipher = AES.new(key, AES.MODE_CTR, nonce=nonce, initial_value=0)
 
             with open(input_path, 'rb') as infile, open(output_path, 'wb') as outfile:
@@ -110,21 +111,18 @@ class FastCompressor:
                             AES.new(key, AES.MODE_CTR, nonce=nonce, initial_value=chunk_index),
                             compressor_obj
                         )
-                        futures.append((chunk_index, future, compressor_obj))
+                        futures.append((chunk_index, future))
                         chunk_index += 1
 
-                    # Process results in order
-                    for chunk_idx, future, compressor_obj in futures:
+                    # Process results in order and write length-prefixed blocks
+                    for chunk_idx, future in futures:
                         result = future.result()
+                        # Write 4-byte length prefix for the encrypted block
+                        outfile.write(struct.pack('<I', len(result)))
                         outfile.write(result)
 
-                        # Write remaining compressed data
-                        compressed = compressor_obj.flush()
-                        if compressed:
-                            outfile.write(cipher.encrypt(compressed))
-
                         bytes_processed += self.BUFFER_SIZE
-                        progress = min(100, (bytes_processed / filesize) * 100)
+                        progress = min(100, (infile.tell() / filesize) * 100)
                         self.update_progress(progress)
 
             return True
@@ -135,7 +133,6 @@ class FastCompressor:
     def decrypt_and_decompress(self, input_path, output_path, key):
         try:
             filesize = os.path.getsize(input_path)
-            bytes_processed = 0
 
             with open(input_path, 'rb') as infile, open(output_path, 'wb') as outfile:
                 # Read nonce
@@ -143,38 +140,35 @@ class FastCompressor:
                 # Skip timestamp
                 infile.read(8)
 
-                # Calculate chunks
-                total_chunks = math.ceil((filesize - 16) / self.BUFFER_SIZE)
-
                 with ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as executor:
                     futures = []
                     chunk_index = 0
 
                     while True:
-                        chunk = infile.read(self.BUFFER_SIZE)
-                        if not chunk:
+                        # Read 4-byte length prefix
+                        length_bytes = infile.read(4)
+                        if not length_bytes or len(length_bytes) < 4:
+                            break
+                        block_length = struct.unpack('<I', length_bytes)[0]
+                        block_data = infile.read(block_length)
+                        if len(block_data) < block_length:
                             break
 
                         decompressor = zlib.decompressobj()
                         future = executor.submit(
                             self.process_chunk_decrypt,
-                            chunk,
+                            block_data,
                             AES.new(key, AES.MODE_CTR, nonce=nonce, initial_value=chunk_index),
                             decompressor
                         )
-                        futures.append((chunk_index, future, decompressor))
+                        futures.append(future)
                         chunk_index += 1
 
                     # Process results in order
-                    for chunk_idx, future, decompressor in futures:
+                    for future in futures:
                         result = future.result()
                         outfile.write(result)
-
-                        # Write remaining decompressed data
-                        outfile.write(decompressor.flush())
-
-                        bytes_processed += self.BUFFER_SIZE
-                        progress = min(100, (bytes_processed / filesize) * 100)
+                        progress = min(100, (infile.tell() / filesize) * 100)
                         self.update_progress(progress)
 
             return True
