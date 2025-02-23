@@ -16,7 +16,7 @@ import math
 class FastCompressor:
     def __init__(self):
         self.window = tk.Tk()
-        self.window.title("Fast Compressor and Encryptor")
+        self.window.title("File Compressor and Encryptor v1.0")
         self.window.geometry("425x400")
 
         # Configure interface
