@@ -17,15 +17,15 @@ class FastCompressor:
     def __init__(self):
         self.window = tk.Tk()
         self.window.title("Fast Compressor and Encryptor")
-        self.window.geometry("600x400")
+        self.window.geometry("425x400")
 
         # Configure interface
         self.setup_ui()
 
         # Increased buffer size for better speed
         self.BUFFER_SIZE = 4 * 1024 * 1024  # 4MB buffer
-        # Number of parallel workers
-        self.MAX_WORKERS = max(4, os.cpu_count())
+        # Number of parallel workers, handle os.cpu_count() returning None
+        self.MAX_WORKERS = max(4, os.cpu_count() or 1)
 
     def setup_ui(self):
         # Main frame
@@ -34,10 +34,8 @@ class FastCompressor:
 
         # Buttons
         ttk.Button(main_frame, text="Select File", command=self.select_file).grid(row=0, column=0, pady=5)
-        ttk.Button(main_frame, text="Compress and Encrypt", command=self.start_compression).grid(row=1, column=0,
-                                                                                                 pady=5)
-        ttk.Button(main_frame, text="Decompress and Decrypt", command=self.start_decompression).grid(row=2, column=0,
-                                                                                                     pady=5)
+        ttk.Button(main_frame, text="Compress and Encrypt", command=self.start_compression).grid(row=1, column=0, pady=5)
+        ttk.Button(main_frame, text="Decompress and Decrypt", command=self.start_decompression).grid(row=2, column=0, pady=5)
 
         # Progress bar
         self.progress = ttk.Progressbar(main_frame, length=400, mode='determinate')
@@ -105,23 +103,23 @@ class FastCompressor:
                         if not chunk:
                             break
 
-                        compressor = zlib.compressobj(level=1)  # Level 1 for maximum speed
+                        compressor_obj = zlib.compressobj(level=1)  # Level 1 for maximum speed
                         future = executor.submit(
                             self.process_chunk,
                             chunk,
                             AES.new(key, AES.MODE_CTR, nonce=nonce, initial_value=chunk_index),
-                            compressor
+                            compressor_obj
                         )
-                        futures.append((chunk_index, future, compressor))
+                        futures.append((chunk_index, future, compressor_obj))
                         chunk_index += 1
 
                     # Process results in order
-                    for chunk_idx, future, compressor in futures:
+                    for chunk_idx, future, compressor_obj in futures:
                         result = future.result()
                         outfile.write(result)
 
                         # Write remaining compressed data
-                        compressed = compressor.flush()
+                        compressed = compressor_obj.flush()
                         if compressed:
                             outfile.write(cipher.encrypt(compressed))
 
@@ -227,12 +225,15 @@ class FastCompressor:
         threading.Thread(target=decompress_thread).start()
 
     def update_progress(self, value):
-        self.progress['value'] = value
-        self.window.mainloop()
+        def _update():
+            self.progress['value'] = value
+        self.window.after(0, _update)
 
     def log_message(self, message):
-        self.log_text.insert(tk.END, f"{message}\n")
-        self.log_text.see(tk.END)
+        def _log():
+            self.log_text.insert(tk.END, f"{message}\n")
+            self.log_text.see(tk.END)
+        self.window.after(0, _log)
 
     def run(self):
         self.window.mainloop()
